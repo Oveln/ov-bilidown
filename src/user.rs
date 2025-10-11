@@ -1,7 +1,8 @@
 use qrcode::{QrCode, render::unicode};
-use reqwest::blocking::Client;
+use reqwest::Client;
 use serde::Deserialize;
-use std::{error::Error as StdError, fmt, io, thread, time::Duration};
+use std::{error::Error as StdError, fmt, io, time::Duration};
+use tokio::time::sleep;
 
 #[derive(Debug)]
 pub enum LoginError {
@@ -72,12 +73,12 @@ pub struct User {
 }
 
 impl User {
-    pub fn new() -> Result<Self, LoginError> {
+    pub async fn new() -> Result<Self, LoginError> {
         let mut user = Self {
             cookies: Vec::new(),
             client: Client::new(),
         };
-        user.login()?;
+        user.login().await?;
         Ok(user)
     }
 
@@ -111,16 +112,16 @@ impl User {
         !self.cookies.is_empty()
     }
 
-    fn gen_qr(&self) -> Result<GenResp, LoginError> {
+    async fn gen_qr(&self) -> Result<GenResp, LoginError> {
         let url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
-        let res: GenResp = self.client.get(url).send()?.json()?;
+        let res: GenResp = self.client.get(url).send().await?.json().await?;
         Ok(res)
     }
 
-    fn poll_qr(&self, key: &str) -> Result<(PollResp, Vec<String>), LoginError> {
+    async fn poll_qr(&self, key: &str) -> Result<(PollResp, Vec<String>), LoginError> {
         let url = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll";
         let req = self.client.get(url).query(&[("qrcode_key", key)]);
-        let resp = req.send()?;
+        let resp = req.send().await?;
         // capture set-cookie headers before consuming the body
         let cookies: Vec<String> = resp
             .headers()
@@ -128,13 +129,13 @@ impl User {
             .iter()
             .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
             .collect();
-        let pr: PollResp = resp.json()?;
+        let pr: PollResp = resp.json().await?;
         Ok((pr, cookies))
     }
 
-    pub fn login(&mut self) -> Result<(), LoginError> {
+    pub async fn login(&mut self) -> Result<(), LoginError> {
         println!("申请二维码...（生成 qrcode_key 与 url）");
-        let gen_resp = match self.gen_qr() {
+        let gen_resp = match self.gen_qr().await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("申请二维码失败: {}", e);
@@ -170,7 +171,7 @@ impl User {
                 return Err(LoginError::Timeout("二维码超时".to_string()));
             }
 
-            match self.poll_qr(&gen_resp.data.qrcode_key) {
+            match self.poll_qr(&gen_resp.data.qrcode_key).await {
                 Ok((pr, cookies)) => {
                     if pr.code != 0 {
                         eprintln!("轮询接口返回非 0 code={} message={}", pr.code, pr.message);
@@ -180,6 +181,7 @@ impl User {
                     match code {
                         86101 => {
                             // 未扫码
+                            println!("等待扫码...");
                         }
                         86090 => {
                             println!("已扫码，等待确认...");
@@ -213,8 +215,7 @@ impl User {
                     return Err(e);
                 }
             }
-
-            thread::sleep(Duration::from_secs(2));
+            sleep(Duration::from_secs(2)).await;
             elapsed += 2;
         }
 
