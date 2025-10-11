@@ -1,7 +1,7 @@
 use qrcode::{QrCode, render::unicode};
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use std::{error::Error as StdError, fmt, thread, time::Duration};
+use std::{error::Error as StdError, fmt, io, thread, time::Duration};
 
 #[derive(Debug)]
 pub enum LoginError {
@@ -79,6 +79,32 @@ impl User {
         };
         user.login()?;
         Ok(user)
+    }
+
+    pub fn new_from_file(file_name: &str) -> Result<Self, LoginError> {
+        let contents = std::fs::read_to_string(file_name)
+            .map_err(|e| LoginError::ApiError(format!("无法读取文件 {}: {}", file_name, e)))?;
+        let cookies: Vec<String> = contents
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        if cookies.is_empty() {
+            return Err(LoginError::ApiError(format!(
+                "文件 {} 中没有有效的 cookie",
+                file_name
+            )));
+        }
+        Ok(Self {
+            cookies,
+            client: Client::new(),
+        })
+    }
+
+    pub fn save_to_file(&self, file_name: &str) -> io::Result<()> {
+        let contents = self.cookies.join("\n");
+        std::fs::write(file_name, contents)?;
+        Ok(())
     }
 
     fn is_logged_in(&self) -> bool {
