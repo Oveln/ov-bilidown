@@ -2,6 +2,7 @@ use reqwest::{RequestBuilder, Url, header::USER_AGENT};
 use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+
 const MIXIN_KEY_ENC_TAB: [usize; 64] = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29,
     28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25,
@@ -86,7 +87,7 @@ fn _encode_wbi(
     params
 }
 
-pub async fn get_wbi_keys() -> Result<(String, String), reqwest::Error> {
+pub async fn get_wbi_keys() -> std::result::Result<(String, String), reqwest::Error> {
     let client = reqwest::Client::new();
     let ResWbi { data:Data{wbi_img} } = client
     .get("https://api.bilibili.com/x/web-interface/nav")
@@ -116,7 +117,7 @@ pub trait WbiSendExt {
         client: &reqwest::Client,
         img_key: &str,
         sub_key: &str,
-    ) -> Result<reqwest::Response, reqwest::Error>;
+    ) -> std::result::Result<reqwest::Response, reqwest::Error>;
 }
 
 impl WbiSendExt for RequestBuilder {
@@ -125,7 +126,7 @@ impl WbiSendExt for RequestBuilder {
         client: &reqwest::Client,
         img_key: &str,
         sub_key: &str,
-    ) -> Result<reqwest::Response, reqwest::Error> {
+    ) -> std::result::Result<reqwest::Response, reqwest::Error> {
         let mut request = self.build()?;
         let url = request.url_mut();
 

@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     download::DashAudioStream,
+    error::{BilidownError, Result},
     user::User,
     wbi::WbiSendExt,
 };
+use log::{info, warn, error};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VideoBasicInfo {
@@ -93,7 +95,7 @@ impl VideoBasicInfo {
     pub async fn new_from_bvid(
         user: &User,
         bvid: &str,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self> {
         let url = "https://api.bilibili.com/x/web-interface/view";
         let params = [("bvid", bvid.to_string())];
         let req = user.get(url).query(&params);
@@ -103,17 +105,19 @@ impl VideoBasicInfo {
             .await?;
         let api_resp: ApiResponse<VideoBasicInfo> = resp.json().await?;
         if api_resp.code != 0 {
-            return Err(format!("API错误: {}", api_resp.message).into());
+            return Err(BilidownError::ApiError(format!("API错误: {}", api_resp.message)));
         }
-        api_resp.data.ok_or_else(|| "API返回数据为空".into())
+        api_resp.data.ok_or_else(|| BilidownError::ApiError("API返回数据为空".to_string()))
     }
     pub async fn download_best_quality_audios_to_file(
         &self,
         user: &User,
         dir: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<()> {
         if let Some(pages) = &self.pages {
+            info!("开始下载视频 {} 的 {} 个分P", self.bvid, pages.len());
             for video_part in pages.iter() {
+                info!("处理分P {} - {}", video_part.page, video_part.part);
                 let audio_streams = video_part.get_dash_audio_stream(&self.bvid, user).await?;
                 if let Some(best_audio) =
                     DashAudioStream::get_highest_quality(audio_streams.as_slice())
@@ -125,17 +129,19 @@ impl VideoBasicInfo {
                         video_part.part.replace("/", "_"),
                         best_audio.get_quality_description()
                     );
-                    println!("正在下载到文件: {}", file_name);
+                    info!("正在下载到文件: {}", file_name);
                     user.download_to_file(&best_audio.base_url, &path, &file_name)
                         .await?;
-                    println!("已下载音频到文件: {}", file_name);
+                    info!("已下载音频到文件: {}", file_name);
                 } else {
-                    println!("未找到可用的音频流");
+                    warn!("分P {} 未找到可用的音频流", video_part.page);
                 }
             }
+            info!("视频 {} 下载完成", self.bvid);
             Ok(())
         } else {
-            Err("视频没有分P信息".into())
+            error!("视频 {} 没有分P信息", self.bvid);
+            Err(BilidownError::ApiError("视频没有分P信息".to_string()))
         }
     }
 }

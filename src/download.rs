@@ -1,7 +1,6 @@
-use crate::user::User;
-use crate::video::VideoPart;
-use crate::wbi::WbiSendExt;
+use crate::{error::{BilidownError, Result}, user::User, video::VideoPart, wbi::WbiSendExt};
 use serde::Deserialize;
+use log::{debug, error, trace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AudioQuality {
@@ -36,6 +35,7 @@ impl AudioQuality {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct DashAudioStream {
     pub id: u32, // 音质代码，如 30216/30232/30280 等
     pub base_url: String,
@@ -62,6 +62,7 @@ impl DashAudioStream {
     }
 
     /// 从音频流列表中获取指定质量等级的音频流
+    #[allow(dead_code)]
     pub fn get_by_quality(
         streams: &[DashAudioStream],
         quality: AudioQuality,
@@ -79,30 +80,35 @@ impl DashAudioStream {
     }
 
     /// 从音频流列表中获取最高码率的音频流
+    #[allow(dead_code)]
     pub fn get_highest_bandwidth(streams: &[DashAudioStream]) -> Option<&DashAudioStream> {
         streams.iter().max_by_key(|stream| stream.bandwidth)
     }
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct DashSegmentBase {
     pub initialization: String,
     pub index_range: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct DolbyInfo {
     pub r#type: u8, // 1: 普通杜比音效, 2: 全景杜比音效
     pub audio: Option<Vec<DashAudioStream>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct FlacInfo {
     pub display: bool, // 是否在播放器显示切换Hi-Res无损音轨按钮
     pub audio: DashAudioStream,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct DashInfo {
     pub duration: f64,
     pub min_buffer_time: Option<f64>,
@@ -112,6 +118,7 @@ pub struct DashInfo {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct PlayUrlDashResp {
     pub code: i32,
     pub message: String,
@@ -129,7 +136,7 @@ impl VideoPart {
         &self,
         bvid: &str,
         user: &User,
-    ) -> Result<Vec<DashAudioStream>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<DashAudioStream>> {
         let url = "https://api.bilibili.com/x/player/playurl";
         let params = vec![
             ("bvid", bvid.to_string()),
@@ -145,13 +152,14 @@ impl VideoPart {
             .wbi_send(user.get_client(), wbi_keys.0, wbi_keys.1)
             .await?;
         let dash_resp: PlayUrlDashResp = resp.json().await?;
-        println!("Dash Response: {:?}", dash_resp);
+        trace!("Dash Response: {:?}", dash_resp);
         if dash_resp.code != 0 {
-            return Err(format!("API错误: {}", dash_resp.message).into());
+            error!("API错误: {}", dash_resp.message);
+            return Err(BilidownError::ApiError(format!("API错误: {}", dash_resp.message)));
         }
 
         let dash = dash_resp.data.dash;
-        println!("{:#?}", dash);
+        trace!("{:#?}", dash);
         let mut audio_streams = dash.audio.unwrap_or_default();
         if let Some(dolby) = dash.dolby {
             if let Some(dolby_stream) = dolby.audio {
@@ -163,7 +171,7 @@ impl VideoPart {
         if let Some(flac) = dash.flac {
             audio_streams.push(flac.audio.clone());
         }
-        println!("{:#?}", audio_streams);
+        debug!("获取到 {} 个音频流", audio_streams.len());
         Ok(audio_streams)
     }
 }

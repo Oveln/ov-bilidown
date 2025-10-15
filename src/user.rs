@@ -1,46 +1,17 @@
 use qrcode::{QrCode, render::unicode};
 use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
-use std::{error::Error as StdError, fmt, io, time::Duration};
+use std::{io, time::Duration};
 use tokio::{
     fs::{create_dir_all, write},
     sync::OnceCell,
     time::sleep,
 };
 
-use crate::wbi::get_wbi_keys;
+use crate::{wbi::get_wbi_keys, error::{BilidownError, Result}};
+use log::{debug, info, warn, error};
 
-#[derive(Debug)]
-pub enum LoginError {
-    ApiError(String),
-    RequestError(reqwest::Error),
-    Timeout(String),
-}
-
-impl fmt::Display for LoginError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LoginError::ApiError(msg) => write!(f, "API错误: {}", msg),
-            LoginError::RequestError(e) => write!(f, "请求错误: {}", e),
-            LoginError::Timeout(msg) => write!(f, "超时: {}", msg),
-        }
-    }
-}
-
-impl StdError for LoginError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            LoginError::RequestError(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<reqwest::Error> for LoginError {
-    fn from(err: reqwest::Error) -> Self {
-        LoginError::RequestError(err)
-    }
-}
+// LoginError不再需要，因为现在使用统一的错误处理
 
 #[derive(Debug, Deserialize)]
 struct GenData {
@@ -49,6 +20,7 @@ struct GenData {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GenResp {
     code: i32,
     message: String,
@@ -57,6 +29,7 @@ struct GenResp {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PollData {
     url: Option<String>,
     refresh_token: Option<String>,
@@ -66,6 +39,7 @@ struct PollData {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct PollResp {
     code: i32,
     message: String,
@@ -80,7 +54,7 @@ pub struct User {
 }
 
 impl User {
-    pub async fn new() -> Result<Self, LoginError> {
+    pub async fn new() -> Result<Self> {
         let mut user = Self {
             cookies: Vec::new(),
             client: Client::new(),
@@ -90,16 +64,16 @@ impl User {
         Ok(user)
     }
 
-    pub fn new_from_file(file_name: &str) -> Result<Self, LoginError> {
+    pub fn new_from_file(file_name: &str) -> Result<Self> {
         let contents = std::fs::read_to_string(file_name)
-            .map_err(|e| LoginError::ApiError(format!("无法读取文件 {}: {}", file_name, e)))?;
+            .map_err(|e| BilidownError::LoginError(format!("无法读取文件 {}: {}", file_name, e)))?;
         let cookies: Vec<String> = contents
             .lines()
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty())
             .collect();
         if cookies.is_empty() {
-            return Err(LoginError::ApiError(format!(
+            return Err(BilidownError::LoginError(format!(
                 "文件 {} 中没有有效的 cookie",
                 file_name
             )));
@@ -121,17 +95,18 @@ impl User {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn is_logged_in(&self) -> bool {
         !self.cookies.is_empty()
     }
 
-    async fn gen_qr(&self) -> Result<GenResp, LoginError> {
+    async fn gen_qr(&self) -> Result<GenResp> {
         let url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
         let res: GenResp = self.client.get(url).send().await?.json().await?;
         Ok(res)
     }
 
-    async fn poll_qr(&self, key: &str) -> Result<(PollResp, Vec<String>), LoginError> {
+    async fn poll_qr(&self, key: &str) -> Result<(PollResp, Vec<String>)> {
         let url = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll";
         let req = self.client.get(url).query(&[("qrcode_key", key)]);
         let resp = req.send().await?;
@@ -146,76 +121,73 @@ impl User {
         Ok((pr, cookies))
     }
 
-    pub async fn login(&mut self) -> Result<(), LoginError> {
-        println!("申请二维码...（生成 qrcode_key 与 url）");
-        let gen_resp = match self.gen_qr().await {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("申请二维码失败: {}", e);
-                return Err(e);
-            }
-        };
+    pub async fn login(&mut self) -> Result<()> {
+        info!("申请二维码...（生成 qrcode_key 与 url）");
+        let gen_resp = self.gen_qr().await.map_err(|e| {
+            error!("申请二维码失败: {}", e);
+            e
+        })?;
 
         if gen_resp.code != 0 {
-            eprintln!(
+            error!(
                 "接口返回错误 code={} message={}",
                 gen_resp.code, gen_resp.message
             );
-            return Err(LoginError::ApiError(gen_resp.message));
+            return Err(BilidownError::LoginError(gen_resp.message));
         }
 
-        println!("请用手机扫码打开下面的 URL（或将 url 生成二维码）:");
-        println!("url: {}", gen_resp.data.url);
+        info!("请用手机扫码打开下面的 URL（或将 url 生成二维码）:");
+        info!("url: {}", gen_resp.data.url);
         let code = QrCode::new(gen_resp.data.url).unwrap();
         let image = code
             .render::<unicode::Dense1x2>()
             .dark_color(unicode::Dense1x2::Light)
             .light_color(unicode::Dense1x2::Dark)
             .build();
-        println!("{}", image);
-        println!("qrcode_key: {}", gen_resp.data.qrcode_key);
+        println!("{}", image); // 二维码图像仍使用print输出
+        info!("qrcode_key: {}", gen_resp.data.qrcode_key);
 
-        println!("开始轮询登录状态（最多 180s）...");
+        info!("开始轮询登录状态（最多 180s）...");
         let mut elapsed = 0u32;
 
         loop {
             if elapsed > 180 {
-                println!("二维码超时，请重试");
-                return Err(LoginError::Timeout("二维码超时".to_string()));
+                warn!("二维码超时，请重试");
+                return Err(BilidownError::LoginError("二维码超时".to_string()));
             }
 
             match self.poll_qr(&gen_resp.data.qrcode_key).await {
                 Ok((pr, cookies)) => {
                     if pr.code != 0 {
-                        eprintln!("轮询接口返回非 0 code={} message={}", pr.code, pr.message);
+                        error!("轮询接口返回非 0 code={} message={}", pr.code, pr.message);
                     }
 
                     let code = pr.data.code.unwrap_or(86101);
                     match code {
                         86101 => {
                             // 未扫码
-                            println!("等待扫码...");
+                            info!("等待扫码...");
                         }
                         86090 => {
-                            println!("已扫码，等待确认...");
+                            info!("已扫码，等待确认...");
                         }
                         86038 => {
-                            println!("二维码已失效或超时");
-                            return Err(LoginError::Timeout("二维码已失效或超时".to_string()));
+                            warn!("二维码已失效或超时");
+                            return Err(BilidownError::LoginError("二维码已失效或超时".to_string()));
                         }
                         0 => {
-                            println!("登录成功！");
+                            info!("登录成功！");
                             if !cookies.is_empty() {
-                                println!("set-cookie headers:");
+                                debug!("set-cookie headers:");
                                 for c in cookies.iter() {
-                                    println!("  {}", c);
+                                    debug!("  {}", c);
                                 }
                                 self.cookies = cookies;
                             }
                             break;
                         }
                         other => {
-                            println!(
+                            info!(
                                 "轮询返回 code={} message={}",
                                 other,
                                 pr.data.message.unwrap_or_default()
@@ -224,7 +196,7 @@ impl User {
                     }
                 }
                 Err(e) => {
-                    eprintln!("轮询失败: {}", e);
+                    error!("轮询失败: {}", e);
                     return Err(e);
                 }
             }
@@ -232,13 +204,18 @@ impl User {
             elapsed += 2;
         }
 
-        println!("结束");
+        info!("登录流程结束");
         Ok(())
     }
     pub async fn get_wbi_keys(&self) -> (&str, &str) {
         let wbi_keys = self
             .wbi_keys
-            .get_or_init(|| async { get_wbi_keys().await.unwrap() })
+            .get_or_init(|| async { 
+                get_wbi_keys().await.unwrap_or_else(|e| {
+                    error!("获取WBI密钥失败: {}", e);
+                    panic!("无法获取WBI密钥，程序退出");
+                })
+            })
             .await;
         (&wbi_keys.0, &wbi_keys.1)
     }
@@ -257,11 +234,11 @@ impl User {
         url: &str,
         path: &str,
         file_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<()> {
         let req = self.get(url);
         let resp = req.send().await?;
         if !resp.status().is_success() {
-            return Err(format!("下载失败，HTTP状态码: {}", resp.status()).into());
+            return Err(BilidownError::ApiError(format!("下载失败，HTTP状态码: {}", resp.status())));
         }
         let bytes = resp.bytes().await?;
         create_dir_all(path).await?;
