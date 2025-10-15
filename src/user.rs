@@ -1,8 +1,14 @@
 use qrcode::{QrCode, render::unicode};
-use reqwest::Client;
+use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
 use std::{error::Error as StdError, fmt, io, time::Duration};
-use tokio::time::sleep;
+use tokio::{
+    fs::{create_dir_all, write},
+    sync::OnceCell,
+    time::sleep,
+};
+
+use crate::wbi::get_wbi_keys;
 
 #[derive(Debug)]
 pub enum LoginError {
@@ -68,8 +74,9 @@ struct PollResp {
 }
 
 pub struct User {
-    pub cookies: Vec<String>,
+    cookies: Vec<String>,
     client: Client,
+    wbi_keys: OnceCell<(String, String)>,
 }
 
 impl User {
@@ -77,6 +84,7 @@ impl User {
         let mut user = Self {
             cookies: Vec::new(),
             client: Client::new(),
+            wbi_keys: OnceCell::new(),
         };
         user.login().await?;
         Ok(user)
@@ -99,11 +107,16 @@ impl User {
         Ok(Self {
             cookies,
             client: Client::new(),
+            wbi_keys: OnceCell::new(),
         })
     }
 
     pub fn save_to_file(&self, file_name: &str) -> io::Result<()> {
         let contents = self.cookies.join("\n");
+        // 保证路径
+        if let Some(parent) = std::path::Path::new(file_name).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(file_name, contents)?;
         Ok(())
     }
@@ -220,6 +233,40 @@ impl User {
         }
 
         println!("结束");
+        Ok(())
+    }
+    pub async fn get_wbi_keys(&self) -> (&str, &str) {
+        let wbi_keys = self
+            .wbi_keys
+            .get_or_init(|| async { get_wbi_keys().await.unwrap() })
+            .await;
+        (&wbi_keys.0, &wbi_keys.1)
+    }
+    pub fn get_client(&self) -> &Client {
+        &self.client
+    }
+    pub fn get(&self, url: &str) -> RequestBuilder {
+        self.client
+        .get(url)
+        .header("Cookie", self.cookies.join("; "))
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36")
+        .header("Referer", "https://www.bilibili.com/")
+    }
+    pub async fn download_to_file(
+        &self,
+        url: &str,
+        path: &str,
+        file_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self.get(url);
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Err(format!("下载失败，HTTP状态码: {}", resp.status()).into());
+        }
+        let bytes = resp.bytes().await?;
+        create_dir_all(path).await?;
+        let file_path = format!("{}/{}", path, file_name);
+        write(file_path, bytes).await?;
         Ok(())
     }
 }
