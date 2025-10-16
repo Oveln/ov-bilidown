@@ -3,13 +3,16 @@ use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
 use std::{io, time::Duration};
 use tokio::{
-    fs::{create_dir_all, write},
+    fs::{create_dir_all, read_to_string, write},
     sync::OnceCell,
     time::sleep,
 };
 
-use crate::{wbi::get_wbi_keys, error::{BilidownError, Result}};
-use log::{debug, info, warn, error};
+use crate::{
+    error::{BilidownError, Result},
+    wbi::get_wbi_keys,
+};
+use log::{debug, error, info, trace, warn};
 
 // LoginError不再需要，因为现在使用统一的错误处理
 
@@ -64,8 +67,9 @@ impl User {
         Ok(user)
     }
 
-    pub fn new_from_file(file_name: &str) -> Result<Self> {
-        let contents = std::fs::read_to_string(file_name)
+    pub async fn new_from_file(file_name: &str) -> Result<Self> {
+        let contents = read_to_string(file_name)
+            .await
             .map_err(|e| BilidownError::LoginError(format!("无法读取文件 {}: {}", file_name, e)))?;
         let cookies: Vec<String> = contents
             .lines()
@@ -78,11 +82,18 @@ impl User {
                 file_name
             )));
         }
-        Ok(Self {
+        let ret = Self {
             cookies,
             client: Client::new(),
             wbi_keys: OnceCell::new(),
-        })
+        };
+        if ret.verify_login().await? {
+            Ok(ret)
+        } else {
+            Err(BilidownError::LoginError(
+                "Cookie 无效或登录已过期".to_string(),
+            ))
+        }
     }
 
     pub fn save_to_file(&self, file_name: &str) -> io::Result<()> {
@@ -95,9 +106,20 @@ impl User {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn is_logged_in(&self) -> bool {
-        !self.cookies.is_empty()
+    async fn verify_login(&self) -> Result<bool> {
+        let url = "https://api.bilibili.com/x/web-interface/nav";
+        let req = self.get(url);
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Ok(false);
+        }
+        let json: serde_json::Value = resp.json().await?;
+        debug!("验证登录返回数据: {}", json);
+        if json["code"] == 0 && json["data"]["isLogin"] == true {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn gen_qr(&self) -> Result<GenResp> {
@@ -173,7 +195,9 @@ impl User {
                         }
                         86038 => {
                             warn!("二维码已失效或超时");
-                            return Err(BilidownError::LoginError("二维码已失效或超时".to_string()));
+                            return Err(BilidownError::LoginError(
+                                "二维码已失效或超时".to_string(),
+                            ));
                         }
                         0 => {
                             info!("登录成功！");
@@ -210,7 +234,7 @@ impl User {
     pub async fn get_wbi_keys(&self) -> (&str, &str) {
         let wbi_keys = self
             .wbi_keys
-            .get_or_init(|| async { 
+            .get_or_init(|| async {
                 get_wbi_keys().await.unwrap_or_else(|e| {
                     error!("获取WBI密钥失败: {}", e);
                     panic!("无法获取WBI密钥，程序退出");
@@ -229,16 +253,14 @@ impl User {
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36")
         .header("Referer", "https://www.bilibili.com/")
     }
-    pub async fn download_to_file(
-        &self,
-        url: &str,
-        path: &str,
-        file_name: &str,
-    ) -> Result<()> {
+    pub async fn download_to_file(&self, url: &str, path: &str, file_name: &str) -> Result<()> {
         let req = self.get(url);
         let resp = req.send().await?;
         if !resp.status().is_success() {
-            return Err(BilidownError::ApiError(format!("下载失败，HTTP状态码: {}", resp.status())));
+            return Err(BilidownError::ApiError(format!(
+                "下载失败，HTTP状态码: {}",
+                resp.status()
+            )));
         }
         let bytes = resp.bytes().await?;
         create_dir_all(path).await?;
