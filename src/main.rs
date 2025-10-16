@@ -57,7 +57,10 @@ async fn load_user(config: &AppConfig) -> Result<User> {
     // 从配置文件加载用户或新建用户
     let user = match User::new_from_file(&config.cookie_file).await {
         Ok(u) => {
-            info!("从文件加载用户信息: {}", &config.cookie_file);
+            info!(
+                "从文件加载用户信息: {}",
+                &config.cookie_file.to_string_lossy()
+            );
             u
         }
         Err(_) => {
@@ -66,7 +69,10 @@ async fn load_user(config: &AppConfig) -> Result<User> {
                 .await
                 .map_err(|e| BilidownError::LoginError(e.to_string()))?;
             u.save_to_file(&config.cookie_file)?;
-            info!("登录成功，cookie已保存到: {}", &config.cookie_file);
+            info!(
+                "登录成功，cookie已保存到: {}",
+                &config.cookie_file.to_string_lossy()
+            );
             u
         }
     };
@@ -108,17 +114,21 @@ async fn main() -> Result<()> {
 
     info!("应用启动");
 
-    let config = AppConfig::new(cli);
+    let config = AppConfig::new(cli)?;
     debug!(
         "配置已加载: output_dir={:?}, cookie_file={}",
-        config.output_dir, config.cookie_file
+        config.output_dir,
+        config.cookie_file.to_string_lossy()
     );
 
     let user = load_user(&config).await?;
 
     match config.bvid {
         Some(ref bvid) => donwload_single(bvid, &user, &config).await?,
-        None => {}
+        None => {
+            println!("{:#?}", config.subscriptions);
+            todo!("订阅下载功能尚未实现")
+        }
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 use qrcode::{QrCode, render::unicode};
 use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
-use std::{io, time::Duration};
+use std::{io, path::PathBuf, time::Duration};
 use tokio::{
     fs::{create_dir_all, read_to_string, write},
     sync::OnceCell,
@@ -12,9 +12,7 @@ use crate::{
     error::{BilidownError, Result},
     wbi::get_wbi_keys,
 };
-use log::{debug, error, info, trace, warn};
-
-// LoginError不再需要，因为现在使用统一的错误处理
+use log::{debug, error, info, warn};
 
 #[derive(Debug, Deserialize)]
 struct GenData {
@@ -67,10 +65,14 @@ impl User {
         Ok(user)
     }
 
-    pub async fn new_from_file(file_name: &str) -> Result<Self> {
-        let contents = read_to_string(file_name)
-            .await
-            .map_err(|e| BilidownError::LoginError(format!("无法读取文件 {}: {}", file_name, e)))?;
+    pub async fn new_from_file(file_path: &PathBuf) -> Result<Self> {
+        let contents = read_to_string(file_path).await.map_err(|e| {
+            BilidownError::LoginError(format!(
+                "无法读取文件 {}: {}",
+                file_path.to_string_lossy(),
+                e
+            ))
+        })?;
         let cookies: Vec<String> = contents
             .lines()
             .map(|line| line.trim().to_string())
@@ -79,7 +81,7 @@ impl User {
         if cookies.is_empty() {
             return Err(BilidownError::LoginError(format!(
                 "文件 {} 中没有有效的 cookie",
-                file_name
+                file_path.to_string_lossy()
             )));
         }
         let ret = Self {
@@ -96,7 +98,7 @@ impl User {
         }
     }
 
-    pub fn save_to_file(&self, file_name: &str) -> io::Result<()> {
+    pub fn save_to_file(&self, file_name: &PathBuf) -> io::Result<()> {
         let contents = self.cookies.join("\n");
         // 保证路径
         if let Some(parent) = std::path::Path::new(file_name).parent() {
