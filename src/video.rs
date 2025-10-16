@@ -4,12 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Subscription,
+    converter::{convert_audio_with_metadata, validate_converted_file},
     download::DashAudioStream,
     error::{BilidownError, Result},
     user::User,
     wbi::WbiSendExt,
 };
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VideoBasicInfo {
@@ -130,17 +131,51 @@ impl VideoBasicInfo {
                 if let Some(best_audio) =
                     DashAudioStream::get_highest_quality(audio_streams.as_slice())
                 {
-                    let path = dir.join(self.bvid.clone());
-                    let file_name = format!(
+                    // 首先下载原始音频文件
+                    let temp_dir = tempfile::TempDir::new().map_err(|e| {
+                        BilidownError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    })?;
+
+                    let temp_file_name = format!(
                         "{}-{}_{}.m4a",
                         self.title.replace("/", "_"),
                         video_part.page,
                         best_audio.get_quality_description()
                     );
-                    info!("正在下载到文件: {}", file_name);
-                    user.download_to_file(&best_audio.base_url, &path, &file_name)
-                        .await?;
-                    info!("已下载音频到文件: {}", file_name);
+                    let temp_file_path = temp_dir.path().join(&temp_file_name);
+
+                    info!("正在下载原始音频文件: {}", temp_file_name);
+                    user.download_to_file(
+                        &best_audio.base_url,
+                        &temp_dir.path().to_path_buf(),
+                        &temp_file_name,
+                    )
+                    .await?;
+
+                    debug!("原始音频下载完成，开始转换和添加元数据");
+
+                    // 转换格式并添加元数据
+                    match convert_audio_with_metadata(
+                        &temp_file_path,
+                        dir,
+                        self,
+                        video_part,
+                        best_audio,
+                    )
+                    .await
+                    {
+                        Ok(output_path) => {
+                            if let Err(e) = validate_converted_file(&output_path) {
+                                warn!("转换后的文件验证失败: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("音频转换失败: {}", e);
+                        }
+                    }
+
+                    // 清理临时文件
+                    drop(temp_dir);
                 } else {
                     warn!("分P {} 未找到可用的音频流", video_part.page);
                 }

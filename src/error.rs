@@ -19,6 +19,9 @@ pub enum BilidownError {
 
     #[error("配置错误: {0}")]
     ConfigError(#[from] config::ConfigError),
+
+    #[error("转换错误: {0}")]
+    ConversionError(String),
 }
 
 impl From<&str> for BilidownError {
