@@ -255,7 +255,7 @@ impl User {
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36")
         .header("Referer", "https://www.bilibili.com/")
     }
-    pub async fn download_to_file(&self, url: &str, path: &str, file_name: &str) -> Result<()> {
+    pub async fn download_to_file(&self, url: &str, path: &PathBuf, file_name: &str) -> Result<()> {
         let req = self.get(url);
         let resp = req.send().await?;
         if !resp.status().is_success() {
@@ -266,7 +266,7 @@ impl User {
         }
         let bytes = resp.bytes().await?;
         create_dir_all(path).await?;
-        let file_path = format!("{}/{}", path, file_name);
+        let file_path = path.join(file_name);
         write(file_path, bytes).await?;
         Ok(())
     }

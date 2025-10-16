@@ -1,12 +1,15 @@
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    config::Subscription,
     download::DashAudioStream,
     error::{BilidownError, Result},
     user::User,
     wbi::WbiSendExt,
 };
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VideoBasicInfo {
@@ -92,10 +95,7 @@ pub struct ApiResponse<T> {
 }
 
 impl VideoBasicInfo {
-    pub async fn new_from_bvid(
-        user: &User,
-        bvid: &str,
-    ) -> Result<Self> {
+    pub async fn new_from_bvid(user: &User, bvid: &str) -> Result<Self> {
         let url = "https://api.bilibili.com/x/web-interface/view";
         let params = [("bvid", bvid.to_string())];
         let req = user.get(url).query(&params);
@@ -105,14 +105,22 @@ impl VideoBasicInfo {
             .await?;
         let api_resp: ApiResponse<VideoBasicInfo> = resp.json().await?;
         if api_resp.code != 0 {
-            return Err(BilidownError::ApiError(format!("API错误: {}", api_resp.message)));
+            return Err(BilidownError::ApiError(format!(
+                "API错误: {}",
+                api_resp.message
+            )));
         }
-        api_resp.data.ok_or_else(|| BilidownError::ApiError("API返回数据为空".to_string()))
+        api_resp
+            .data
+            .ok_or_else(|| BilidownError::ApiError("API返回数据为空".to_string()))
+    }
+    pub async fn new_from_subscription(user: &User, subscription: &Subscription) -> Result<Self> {
+        Self::new_from_bvid(user, &subscription.bvid).await
     }
     pub async fn download_best_quality_audios_to_file(
         &self,
         user: &User,
-        dir: &str,
+        dir: &PathBuf,
     ) -> Result<()> {
         if let Some(pages) = &self.pages {
             info!("开始下载视频 {} 的 {} 个分P", self.bvid, pages.len());
@@ -122,11 +130,11 @@ impl VideoBasicInfo {
                 if let Some(best_audio) =
                     DashAudioStream::get_highest_quality(audio_streams.as_slice())
                 {
-                    let path = format!("{}/{}", dir, self.bvid);
+                    let path = dir.join(self.bvid.clone());
                     let file_name = format!(
                         "{}-{}_{}.m4a",
                         self.title.replace("/", "_"),
-                        video_part.part.replace("/", "_"),
+                        video_part.page,
                         best_audio.get_quality_description()
                     );
                     info!("正在下载到文件: {}", file_name);

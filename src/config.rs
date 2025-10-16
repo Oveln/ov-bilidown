@@ -76,7 +76,7 @@ impl AppConfig {
         let subscription_path = cli.subscription_file.unwrap_or_else(|| {
             let mut path = dirs::config_dir().unwrap_or_else(|| std::env::current_dir().unwrap());
             path.push("ov-bilidown");
-            path.push("subscriptions.toml");
+            path.push("config.toml");
             path
         });
         let subscription_config = config::Config::builder()

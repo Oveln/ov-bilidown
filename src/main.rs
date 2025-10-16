@@ -5,6 +5,8 @@ mod user;
 mod video;
 mod wbi;
 
+use std::path::PathBuf;
+
 use chrono;
 use clap::Parser;
 use config::{AppConfig, Cli};
@@ -14,7 +16,12 @@ use log::{debug, info, warn};
 use user::User;
 use video::VideoBasicInfo;
 
-async fn donwload_single(bvid: &String, user: &User, config: &AppConfig) -> Result<()> {
+async fn donwload_single(
+    bvid: &String,
+    user: &User,
+    output_dir: &PathBuf,
+    info_only: bool,
+) -> Result<()> {
     info!("开始处理视频: {}", bvid);
 
     debug!("正在获取视频信息...");
@@ -24,7 +31,7 @@ async fn donwload_single(bvid: &String, user: &User, config: &AppConfig) -> Resu
         video.title, video.owner.name, video.bvid
     );
 
-    if config.info_only {
+    if info_only {
         // 仅显示视频信息
         info!("以信息模式运行，不下载音频");
         println!("视频信息:");
@@ -39,13 +46,10 @@ async fn donwload_single(bvid: &String, user: &User, config: &AppConfig) -> Resu
             }
         }
     } else {
-        info!("开始下载音频到目录: {:?}", config.output_dir);
+        info!("开始下载音频到目录: {:?}", output_dir);
         // 下载音频
         video
-            .download_best_quality_audios_to_file(
-                &user,
-                config.output_dir.to_string_lossy().as_ref(),
-            )
+            .download_best_quality_audios_to_file(&user, &output_dir)
             .await?;
         info!("下载完成!");
         println!("下载完成!");
@@ -124,10 +128,26 @@ async fn main() -> Result<()> {
     let user = load_user(&config).await?;
 
     match config.bvid {
-        Some(ref bvid) => donwload_single(bvid, &user, &config).await?,
+        Some(ref bvid) => {
+            donwload_single(bvid, &user, &config.output_dir, config.info_only).await?
+        }
         None => {
-            println!("{:#?}", config.subscriptions);
-            todo!("订阅下载功能尚未实现")
+            for (index, subscription) in config.subscriptions.iter().enumerate() {
+                info!("开始处理订阅: {}:{}", index, subscription.title);
+                let videos = VideoBasicInfo::new_from_subscription(&user, &subscription).await?;
+                info!(
+                    "订阅 {} 获取到视频: {} ({} - {})",
+                    index, videos.title, videos.owner.name, videos.bvid
+                );
+                donwload_single(
+                    &subscription.bvid,
+                    &user,
+                    &config.output_dir,
+                    config.info_only,
+                )
+                .await?;
+                info!("订阅 {}:{} 处理完成", index, subscription.title);
+            }
         }
     }
     Ok(())
