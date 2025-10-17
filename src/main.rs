@@ -12,6 +12,7 @@ use chrono;
 use clap::Parser;
 use config::{AppConfig, Cli};
 use error::{BilidownError, Result};
+use futures::future;
 use log::{debug, info, warn};
 
 use user::User;
@@ -133,22 +134,38 @@ async fn main() -> Result<()> {
             donwload_single(bvid, &user, &config.output_dir, config.info_only).await?
         }
         None => {
-            for (index, subscription) in config.subscriptions.iter().enumerate() {
-                info!("开始处理订阅: {}:{}", index, subscription.title);
-                let videos = VideoBasicInfo::new_from_subscription(&user, &subscription).await?;
-                info!(
-                    "订阅 {} 获取到视频: {} ({} - {})",
-                    index, videos.title, videos.owner.name, videos.bvid
-                );
-                donwload_single(
-                    &subscription.bvid,
-                    &user,
-                    &config.output_dir,
-                    config.info_only,
-                )
-                .await?;
-                info!("订阅 {}:{} 处理完成", index, subscription.title);
-            }
+            let tasks = config
+                .subscriptions
+                .iter()
+                .enumerate()
+                .map(|(index, subscription)| {
+                    let user = &user;
+                    let output_dir = &config.output_dir;
+                    let info_only = config.info_only;
+                    async move {
+                        info!("开始处理订阅: {}:{}", index, subscription.title);
+                        match VideoBasicInfo::new_from_subscription(user, &subscription).await {
+                            Ok(videos) => {
+                                info!(
+                                    "订阅 {} 获取到视频: {} ({} - {})",
+                                    index, videos.title, videos.owner.name, videos.bvid
+                                );
+                                if let Err(e) =
+                                    donwload_single(&subscription.bvid, user, output_dir, info_only)
+                                        .await
+                                {
+                                    warn!("订阅 {}:{} 处理失败: {}", index, subscription.title, e);
+                                } else {
+                                    info!("订阅 {}:{} 处理完成", index, subscription.title);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("订阅 {}:{} 获取视频失败: {}", index, subscription.title, e);
+                            }
+                        }
+                    }
+                });
+            future::join_all(tasks).await;
         }
     }
     Ok(())
