@@ -2,6 +2,7 @@ use reqwest::{RequestBuilder, Url, header::USER_AGENT};
 use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::error::Result;
 
 const MIXIN_KEY_ENC_TAB: [usize; 64] = [
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29,
@@ -52,6 +53,7 @@ fn get_url_encoded(s: &str) -> String {
         })
         .collect::<String>()
 }
+
 // 为请求参数进行 wbi 签名
 fn encode_wbi(
     params: Vec<(String, String)>,
@@ -87,7 +89,7 @@ fn _encode_wbi(
     params
 }
 
-pub async fn get_wbi_keys() -> std::result::Result<(String, String), reqwest::Error> {
+pub async fn get_wbi_keys() -> Result<(String, String)> {
     let client = reqwest::Client::new();
     let ResWbi { data:Data{wbi_img} } = client
     .get("https://api.bilibili.com/x/web-interface/nav")
@@ -112,40 +114,43 @@ fn take_filename(url: String) -> Option<String> {
 }
 
 pub trait WbiSendExt {
-    async fn wbi_send(
+    fn wbi_send(
         self,
         client: &reqwest::Client,
         img_key: &str,
         sub_key: &str,
-    ) -> std::result::Result<reqwest::Response, reqwest::Error>;
+    ) -> impl std::future::Future<Output = std::result::Result<reqwest::Response, reqwest::Error>> + Send;
 }
 
 impl WbiSendExt for RequestBuilder {
-    async fn wbi_send(
+    fn wbi_send(
         self,
         client: &reqwest::Client,
         img_key: &str,
         sub_key: &str,
-    ) -> std::result::Result<reqwest::Response, reqwest::Error> {
-        let mut request = self.build()?;
-        let url = request.url_mut();
+    ) -> impl std::future::Future<Output = std::result::Result<reqwest::Response, reqwest::Error>> + Send {
+        async move {
+            let mut request = self.build()?;
+            let url = request.url_mut();
 
-        let params: Vec<(String, String)> = url.query_pairs().into_owned().collect();
-        let signed = encode_wbi(params, (img_key.to_string(), sub_key.to_string()));
+            let params: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+            let signed = encode_wbi(params, (img_key.to_string(), sub_key.to_string()));
 
-        let base = format!(
-            "{}://{}{}",
-            url.scheme(),
-            url.host_str().unwrap_or(""),
-            url.path()
-        );
-        let new_url = Url::parse_with_params(&base, &signed).unwrap();
-        *url = new_url;
+            let base = format!(
+                "{}://{}{}",
+                url.scheme(),
+                url.host_str().unwrap_or(""),
+                url.path()
+            );
+            let new_url = Url::parse_with_params(&base, &signed).unwrap();
+            *url = new_url;
 
-        // 使用传入的 client 发送！
-        client.execute(request).await
+            // 使用传入的 client 发送！
+            client.execute(request).await
+        }
     }
 }
+
 // 取自文档描述的测试用例
 #[cfg(test)]
 mod tests {

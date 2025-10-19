@@ -22,6 +22,12 @@ pub enum BilidownError {
 
     #[error("转换错误: {0}")]
     ConversionError(String),
+
+    #[error("文件验证错误: {0}")]
+    ValidationError(String),
+
+    #[error("参数错误: {0}")]
+    ArgumentError(String),
 }
 
 impl From<&str> for BilidownError {

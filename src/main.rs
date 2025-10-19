@@ -1,24 +1,18 @@
-mod config;
-mod converter;
-mod download;
-mod error;
-mod user;
-mod video;
-mod wbi;
-
 use std::path::PathBuf;
 
 use chrono;
 use clap::Parser;
-use config::{AppConfig, Cli};
-use error::{BilidownError, Result};
 use futures::future;
 use log::{debug, info, warn};
 
-use user::User;
-use video::VideoBasicInfo;
+use ov_bilidown::{
+    config::{AppConfig, Cli},
+    error::{BilidownError, Result},
+    user::User,
+    VideoBasicInfo,
+};
 
-async fn donwload_single(
+async fn download_single(
     bvid: &String,
     user: &User,
     output_dir: &PathBuf,
@@ -84,6 +78,7 @@ async fn load_user(config: &AppConfig) -> Result<User> {
     };
     Ok(user)
 }
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -131,7 +126,7 @@ async fn main() -> Result<()> {
 
     match config.bvid {
         Some(ref bvid) => {
-            donwload_single(bvid, &user, &config.output_dir, config.info_only).await?
+            download_single(bvid, &user, &config.output_dir, config.info_only).await?
         }
         None => {
             let tasks = config
@@ -151,7 +146,7 @@ async fn main() -> Result<()> {
                                     index, videos.title, videos.owner.name, videos.bvid
                                 );
                                 if let Err(e) =
-                                    donwload_single(&subscription.bvid, user, output_dir, info_only)
+                                    download_single(&subscription.bvid, user, output_dir, info_only)
                                         .await
                                 {
                                     warn!("订阅 {}:{} 处理失败: {}", index, subscription.title, e);

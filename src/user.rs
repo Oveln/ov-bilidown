@@ -1,6 +1,5 @@
 use qrcode::{QrCode, render::unicode};
 use reqwest::{Client, RequestBuilder};
-use serde::Deserialize;
 use std::{io, path::PathBuf, time::Duration};
 use tokio::{
     fs::{create_dir_all, read_to_string, write},
@@ -9,56 +8,20 @@ use tokio::{
 };
 
 use crate::{
+    api::{client::ApiClient, endpoints},
     error::{BilidownError, Result},
-    wbi::get_wbi_keys,
 };
 use log::{debug, error, info, warn};
 
-#[derive(Debug, Deserialize)]
-struct GenData {
-    url: String,
-    qrcode_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct GenResp {
-    code: i32,
-    message: String,
-    ttl: i32,
-    data: GenData,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct PollData {
-    url: Option<String>,
-    refresh_token: Option<String>,
-    timestamp: Option<i64>,
-    code: Option<i32>,
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct PollResp {
-    code: i32,
-    message: String,
-    ttl: i32,
-    data: PollData,
-}
-
 pub struct User {
-    cookies: Vec<String>,
-    client: Client,
+    api_client: ApiClient,
     wbi_keys: OnceCell<(String, String)>,
 }
 
 impl User {
     pub async fn new() -> Result<Self> {
         let mut user = Self {
-            cookies: Vec::new(),
-            client: Client::new(),
+            api_client: ApiClient::new(Vec::new()),
             wbi_keys: OnceCell::new(),
         };
         user.login().await?;
@@ -85,8 +48,7 @@ impl User {
             )));
         }
         let ret = Self {
-            cookies,
-            client: Client::new(),
+            api_client: ApiClient::new(cookies),
             wbi_keys: OnceCell::new(),
         };
         if ret.verify_login().await? {
@@ -99,7 +61,7 @@ impl User {
     }
 
     pub fn save_to_file(&self, file_name: &PathBuf) -> io::Result<()> {
-        let contents = self.cookies.join("\n");
+        let contents = self.api_client.cookies.join("\n");
         // 保证路径
         if let Some(parent) = std::path::Path::new(file_name).parent() {
             std::fs::create_dir_all(parent)?;
@@ -109,45 +71,12 @@ impl User {
     }
 
     async fn verify_login(&self) -> Result<bool> {
-        let url = "https://api.bilibili.com/x/web-interface/nav";
-        let req = self.get(url);
-        let resp = req.send().await?;
-        if !resp.status().is_success() {
-            return Ok(false);
-        }
-        let json: serde_json::Value = resp.json().await?;
-        debug!("验证登录返回数据: {}", json);
-        if json["code"] == 0 && json["data"]["isLogin"] == true {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    async fn gen_qr(&self) -> Result<GenResp> {
-        let url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate";
-        let res: GenResp = self.client.get(url).send().await?.json().await?;
-        Ok(res)
-    }
-
-    async fn poll_qr(&self, key: &str) -> Result<(PollResp, Vec<String>)> {
-        let url = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll";
-        let req = self.client.get(url).query(&[("qrcode_key", key)]);
-        let resp = req.send().await?;
-        // capture set-cookie headers before consuming the body
-        let cookies: Vec<String> = resp
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
-            .collect();
-        let pr: PollResp = resp.json().await?;
-        Ok((pr, cookies))
+        endpoints::verify_login(self).await
     }
 
     pub async fn login(&mut self) -> Result<()> {
         info!("申请二维码...（生成 qrcode_key 与 url）");
-        let gen_resp = self.gen_qr().await.map_err(|e| {
+        let gen_resp = endpoints::generate_qr_login(self).await.map_err(|e| {
             error!("申请二维码失败: {}", e);
             e
         })?;
@@ -180,7 +109,7 @@ impl User {
                 return Err(BilidownError::LoginError("二维码超时".to_string()));
             }
 
-            match self.poll_qr(&gen_resp.data.qrcode_key).await {
+            match endpoints::poll_qr_login(self, &gen_resp.data.qrcode_key).await {
                 Ok((pr, cookies)) => {
                     if pr.code != 0 {
                         error!("轮询接口返回非 0 code={} message={}", pr.code, pr.message);
@@ -208,7 +137,7 @@ impl User {
                                 for c in cookies.iter() {
                                     debug!("  {}", c);
                                 }
-                                self.cookies = cookies;
+                                self.api_client.cookies = cookies;
                             }
                             break;
                         }
@@ -233,11 +162,12 @@ impl User {
         info!("登录流程结束");
         Ok(())
     }
+    
     pub async fn get_wbi_keys(&self) -> (&str, &str) {
         let wbi_keys = self
             .wbi_keys
             .get_or_init(|| async {
-                get_wbi_keys().await.unwrap_or_else(|e| {
+                crate::wbi::get_wbi_keys().await.unwrap_or_else(|e| {
                     error!("获取WBI密钥失败: {}", e);
                     panic!("无法获取WBI密钥，程序退出");
                 })
@@ -245,16 +175,15 @@ impl User {
             .await;
         (&wbi_keys.0, &wbi_keys.1)
     }
+    
     pub fn get_client(&self) -> &Client {
-        &self.client
+        &self.api_client.client
     }
+    
     pub fn get(&self, url: &str) -> RequestBuilder {
-        self.client
-        .get(url)
-        .header("Cookie", self.cookies.join("; "))
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36")
-        .header("Referer", "https://www.bilibili.com/")
+        self.api_client.get(url)
     }
+    
     pub async fn download_to_file(&self, url: &str, path: &PathBuf, file_name: &str) -> Result<()> {
         let req = self.get(url);
         let resp = req.send().await?;

@@ -5,6 +5,8 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::models::Subscription;
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
@@ -47,12 +49,6 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Subscription {
-    pub title: String,
-    pub bvid: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct Subscriptions {
     #[serde(default)]
     #[serde(rename = "sub")]
@@ -60,7 +56,7 @@ struct Subscriptions {
 }
 
 impl AppConfig {
-    pub fn new(cli: Cli) -> Result<Self, ConfigError> {
+    pub fn new(cli: Cli) -> std::result::Result<Self, ConfigError> {
         let output_dir = cli.output_dir.unwrap_or_else(|| {
             dirs::download_dir().unwrap_or_else(|| std::env::current_dir().unwrap())
         });

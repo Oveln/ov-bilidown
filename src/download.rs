@@ -1,6 +1,6 @@
-use crate::{error::{BilidownError, Result}, user::User, video::VideoPart, wbi::WbiSendExt};
+use crate::{api::endpoints, error::Result, user::User};
 use serde::Deserialize;
-use log::{debug, error, trace};
+use log::{debug, trace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AudioQuality {
@@ -131,33 +131,14 @@ pub struct PlayUrlDashData {
     pub dash: DashInfo,
 }
 
-impl VideoPart {
+impl crate::models::VideoPart {
     pub async fn get_dash_audio_stream(
         &self,
         bvid: &str,
         user: &User,
     ) -> Result<Vec<DashAudioStream>> {
-        let url = "https://api.bilibili.com/x/player/playurl";
-        let params = vec![
-            ("bvid", bvid.to_string()),
-            ("cid", self.cid.to_string()),
-            ("fnval", "4048".to_string()), // 获取所有 DASH 流
-            ("fnver", "0".to_string()),
-            ("otype", "json".to_string()),
-        ];
-        let wbi_keys = user.get_wbi_keys().await;
-        let resp = user
-            .get(url)
-            .query(&params)
-            .wbi_send(user.get_client(), wbi_keys.0, wbi_keys.1)
-            .await?;
-        let dash_resp: PlayUrlDashResp = resp.json().await?;
-        trace!("Dash Response: {:?}", dash_resp);
-        if dash_resp.code != 0 {
-            error!("API错误: {}", dash_resp.message);
-            return Err(BilidownError::ApiError(format!("API错误: {}", dash_resp.message)));
-        }
-
+        let dash_resp = endpoints::get_play_url_dash(user, bvid, self.cid).await?;
+        
         let dash = dash_resp.data.dash;
         trace!("{:#?}", dash);
         let mut audio_streams = dash.audio.unwrap_or_default();

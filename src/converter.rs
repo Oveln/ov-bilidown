@@ -1,14 +1,11 @@
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
 
 use chrono::Datelike;
 use lofty::config::WriteOptions;
 use lofty::prelude::*;
 use lofty::tag::{Tag, TagType};
 
-use crate::download::DashAudioStream;
-use crate::error::{BilidownError, Result};
-use crate::video::{VideoBasicInfo, VideoPart};
+use crate::{download::DashAudioStream, error::{BilidownError, Result}, models::{VideoBasicInfo, VideoPart}, utils};
 use log::{debug, info};
 
 pub async fn convert_audio_with_metadata(
@@ -58,7 +55,7 @@ fn determine_output_format(audio_stream: &DashAudioStream) -> AudioFormat {
 }
 
 fn generate_output_filename(title: &str, video_part: &VideoPart, format: AudioFormat) -> String {
-    let clean_title = title.replace("/", "_").replace(":", "_");
+    let clean_title = utils::sanitize_filename(title);
     let extension = match format {
         AudioFormat::Mp3 => "mp3",
         AudioFormat::Flac => "flac",
@@ -79,30 +76,16 @@ async fn convert_to_mp3(input_path: &Path, output_path: &Path) -> Result<()> {
         .ok_or_else(|| BilidownError::ConversionError("输出路径无效".to_string()))?;
 
     // 使用ffmpeg命令行工具进行转换
-    let output = Command::new("ffmpeg")
-        .args([
-            "-i",
-            input_path_str,
-            "-codec:a",
-            "libmp3lame",
-            "-q:a",
-            "2",  // 高质量
-            "-y", // 覆盖输出文件
-            output_path_str,
-        ])
-        .output()
-        .await
-        .map_err(|e| BilidownError::ConversionError(format!("ffmpeg执行失败: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BilidownError::ConversionError(format!(
-            "MP3转换失败: {}",
-            stderr
-        )));
-    }
-
-    Ok(())
+    utils::run_ffmpeg_command(&[
+        "-i",
+        input_path_str,
+        "-codec:a",
+        "libmp3lame",
+        "-q:a",
+        "2",  // 高质量
+        "-y", // 覆盖输出文件
+        output_path_str,
+    ]).await
 }
 
 async fn convert_to_flac(input_path: &Path, output_path: &Path) -> Result<()> {
@@ -117,30 +100,16 @@ async fn convert_to_flac(input_path: &Path, output_path: &Path) -> Result<()> {
         .ok_or_else(|| BilidownError::ConversionError("输出路径无效".to_string()))?;
 
     // 使用ffmpeg命令行工具进行转换
-    let output = Command::new("ffmpeg")
-        .args([
-            "-i",
-            input_path_str,
-            "-codec:a",
-            "flac",
-            "-compression_level",
-            "5", // 中等压缩级别
-            "-y",
-            output_path_str,
-        ])
-        .output()
-        .await
-        .map_err(|e| BilidownError::ConversionError(format!("ffmpeg执行失败: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BilidownError::ConversionError(format!(
-            "FLAC转换失败: {}",
-            stderr
-        )));
-    }
-
-    Ok(())
+    utils::run_ffmpeg_command(&[
+        "-i",
+        input_path_str,
+        "-codec:a",
+        "flac",
+        "-compression_level",
+        "5", // 中等压缩级别
+        "-y",
+        output_path_str,
+    ]).await
 }
 
 fn add_metadata_to_file(
@@ -209,24 +178,11 @@ fn add_metadata_to_file(
 /// 验证转换后的音频文件
 pub fn validate_converted_file(file_path: &Path) -> Result<()> {
     // 检查文件是否存在
-    if !file_path.exists() {
-        return Err(BilidownError::ConversionError(format!(
-            "转换后的文件不存在: {:?}",
-            file_path
-        )));
-    }
-
+    utils::validate_file_exists(file_path)?;
+    
     // 检查文件大小
-    let metadata = std::fs::metadata(file_path)
-        .map_err(|e| BilidownError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    utils::validate_file_not_empty(file_path)?;
 
-    if metadata.len() == 0 {
-        return Err(BilidownError::ConversionError(format!(
-            "转换后的文件为空: {:?}",
-            file_path
-        )));
-    }
-
-    debug!("验证音频文件: {:?} ({} bytes)", file_path, metadata.len());
+    debug!("验证音频文件: {:?} ({} bytes)", file_path, std::fs::metadata(file_path)?.len());
     Ok(())
 }
