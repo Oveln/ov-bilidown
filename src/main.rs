@@ -6,22 +6,24 @@ use futures::future;
 use log::{debug, info, warn};
 
 use ov_bilidown::{
+    VideoBasicInfo,
     config::{AppConfig, Cli},
     error::{BilidownError, Result},
+    models::Subscription,
     user::User,
-    VideoBasicInfo,
 };
 
 async fn download_single(
-    bvid: &String,
+    subscription: &Subscription,
     user: &User,
     output_dir: &PathBuf,
     info_only: bool,
 ) -> Result<()> {
+    let bvid = &subscription.bvid;
     info!("开始处理视频: {}", bvid);
 
     debug!("正在获取视频信息...");
-    let video = VideoBasicInfo::new_from_bvid(&user, &bvid).await?;
+    let video = VideoBasicInfo::new_from_bvid(&user, bvid).await?;
     info!(
         "视频信息获取成功: {} ({} - {})",
         video.title, video.owner.name, video.bvid
@@ -45,7 +47,7 @@ async fn download_single(
         info!("开始下载音频到目录: {:?}", output_dir);
         // 下载音频
         video
-            .download_best_quality_audios_to_file(&user, &output_dir)
+            .download_best_quality_audios_to_file(&user, &output_dir, &subscription)
             .await?;
         info!("下载完成!");
         println!("下载完成!");
@@ -126,7 +128,13 @@ async fn main() -> Result<()> {
 
     match config.bvid {
         Some(ref bvid) => {
-            download_single(bvid, &user, &config.output_dir, config.info_only).await?
+            let subscription = Subscription {
+                bvid: bvid.clone(),
+                title: Some("{title}".to_string()),
+                artist: None,
+                album: None,
+            };
+            download_single(&subscription, &user, &config.output_dir, config.info_only).await?
         }
         None => {
             let tasks = config
@@ -138,7 +146,8 @@ async fn main() -> Result<()> {
                     let output_dir = &config.output_dir;
                     let info_only = config.info_only;
                     async move {
-                        info!("开始处理订阅: {}:{}", index, subscription.title);
+                        let title = subscription.title.clone().unwrap_or_default();
+                        info!("开始处理订阅: {}:{}", index, title);
                         match VideoBasicInfo::new_from_subscription(user, &subscription).await {
                             Ok(videos) => {
                                 info!(
@@ -146,16 +155,16 @@ async fn main() -> Result<()> {
                                     index, videos.title, videos.owner.name, videos.bvid
                                 );
                                 if let Err(e) =
-                                    download_single(&subscription.bvid, user, output_dir, info_only)
+                                    download_single(&subscription, user, output_dir, info_only)
                                         .await
                                 {
-                                    warn!("订阅 {}:{} 处理失败: {}", index, subscription.title, e);
+                                    warn!("订阅 {}:{} 处理失败: {}", index, title, e);
                                 } else {
-                                    info!("订阅 {}:{} 处理完成", index, subscription.title);
+                                    info!("订阅 {}:{} 处理完成", index, title);
                                 }
                             }
                             Err(e) => {
-                                warn!("订阅 {}:{} 获取视频失败: {}", index, subscription.title, e);
+                                warn!("订阅 {}:{} 获取视频失败: {}", index, title, e);
                             }
                         }
                     }

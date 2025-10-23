@@ -5,8 +5,34 @@ use lofty::config::WriteOptions;
 use lofty::prelude::*;
 use lofty::tag::{Tag, TagType};
 
-use crate::{download::DashAudioStream, error::{BilidownError, Result}, models::{VideoBasicInfo, VideoPart}, utils};
+use crate::{
+    download::DashAudioStream,
+    error::{BilidownError, Result},
+    models::{Subscription, VideoBasicInfo, VideoPart},
+    utils,
+};
 use log::{debug, info};
+
+fn replace_wildcards(input: &str, video_info: &VideoBasicInfo, video_part: &VideoPart) -> String {
+    let mut result = input.to_string();
+
+    // 替换预定义的通配符
+    result = result.replace("{title}", &video_info.title); // 视频标题
+    result = result.replace("{part_title}", &video_part.part); // 分P标题
+    result = result.replace("{artist}", &video_info.owner.name); // UP主名称
+    result = result.replace("{uploader}", &video_info.owner.name); // UP主名称（别名）
+    result = result.replace("{album}", &video_info.title); // 视频标题（作为专辑）
+    result = result.replace("{bv_id}", &video_info.bvid); // BV号
+    result = result.replace("{aid}", &video_info.aid.to_string()); // AID
+    result = result.replace("{duration}", &video_part.duration.to_string()); // 分P时长
+    result = result.replace("{page}", &video_part.page.to_string()); // 分P编号
+    result = result.replace(
+        "{date}",
+        &chrono::Local::now().format("%Y-%m-%d").to_string(),
+    ); // 当前日期
+
+    result
+}
 
 pub async fn convert_audio_with_metadata(
     input_path: &Path,
@@ -14,6 +40,7 @@ pub async fn convert_audio_with_metadata(
     video_info: &VideoBasicInfo,
     video_part: &VideoPart,
     audio_stream: &DashAudioStream,
+    subscription: &Subscription,
 ) -> Result<PathBuf> {
     info!("开始转换音频并添加元数据: {:?}", input_path);
 
@@ -30,7 +57,7 @@ pub async fn convert_audio_with_metadata(
     }
 
     // 添加元数据
-    add_metadata_to_file(&output_path, video_info, video_part)?;
+    add_metadata_to_file(&output_path, video_info, video_part, subscription)?;
 
     info!("音频转换完成: {:?}", output_path);
     Ok(output_path)
@@ -85,7 +112,8 @@ async fn convert_to_mp3(input_path: &Path, output_path: &Path) -> Result<()> {
         "2",  // 高质量
         "-y", // 覆盖输出文件
         output_path_str,
-    ]).await
+    ])
+    .await
 }
 
 async fn convert_to_flac(input_path: &Path, output_path: &Path) -> Result<()> {
@@ -109,13 +137,15 @@ async fn convert_to_flac(input_path: &Path, output_path: &Path) -> Result<()> {
         "5", // 中等压缩级别
         "-y",
         output_path_str,
-    ]).await
+    ])
+    .await
 }
 
 fn add_metadata_to_file(
     file_path: &Path,
     video_info: &VideoBasicInfo,
     video_part: &VideoPart,
+    subscription: &Subscription,
 ) -> Result<()> {
     info!("正在添加元数据到文件: {:?}", file_path);
 
@@ -151,11 +181,33 @@ fn add_metadata_to_file(
         tagged_file.tag_mut(tag_type).unwrap()
     };
 
-    // 设置元数据 - 按照音乐播放器的标准映射
-    // 分P标题作为歌曲名，视频标题作为专辑名，UP主作为艺术家
-    tag.set_title(video_part.part.clone()); // 歌名 = 分P标题
-    tag.set_artist(video_info.owner.name.clone()); // 艺术家 = UP主
-    tag.set_album(video_info.title.clone()); // 专辑名 = 视频标题
+    // 设置元数据 - 优先使用订阅中的自定义元数据，否则使用视频信息
+    // 歌曲名：优先使用订阅中的track_title，否则使用分P标题
+    let title = if let Some(ref title) = subscription.title {
+        replace_wildcards(title, video_info, video_part)
+    } else {
+        video_part.part.clone()
+    };
+    debug!("title: {}", title);
+    tag.set_title(title);
+
+    // 艺术家：优先使用订阅中的artist，否则使用UP主名
+    let artist = if let Some(ref artist) = subscription.artist {
+        replace_wildcards(artist, video_info, video_part)
+    } else {
+        video_info.owner.name.clone()
+    };
+    debug!("artist: {}", artist);
+    tag.set_artist(artist);
+
+    // 专辑名：优先使用订阅中的album，否则使用视频标题
+    let album = if let Some(ref album) = subscription.album {
+        replace_wildcards(album, video_info, video_part)
+    } else {
+        video_info.title.clone()
+    };
+    tag.set_album(album);
+
     tag.set_genre("Bilibili".to_string());
     tag.set_year(chrono::Local::now().year() as u32);
     tag.set_track(video_part.page as u32);
@@ -179,10 +231,14 @@ fn add_metadata_to_file(
 pub fn validate_converted_file(file_path: &Path) -> Result<()> {
     // 检查文件是否存在
     utils::validate_file_exists(file_path)?;
-    
+
     // 检查文件大小
     utils::validate_file_not_empty(file_path)?;
 
-    debug!("验证音频文件: {:?} ({} bytes)", file_path, std::fs::metadata(file_path)?.len());
+    debug!(
+        "验证音频文件: {:?} ({} bytes)",
+        file_path,
+        std::fs::metadata(file_path)?.len()
+    );
     Ok(())
 }

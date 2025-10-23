@@ -15,15 +15,16 @@ impl VideoBasicInfo {
     pub async fn new_from_bvid(user: &User, bvid: &str) -> Result<Self> {
         endpoints::get_video_info(user, bvid).await
     }
-    
+
     pub async fn new_from_subscription(user: &User, subscription: &Subscription) -> Result<Self> {
         Self::new_from_bvid(user, &subscription.bvid).await
     }
-    
+
     pub async fn download_best_quality_audios_to_file(
         &self,
         user: &User,
         dir: &PathBuf,
+        subscription: &Subscription,
     ) -> Result<()> {
         if let Some(pages) = &self.pages {
             info!("开始下载视频 {} 的 {} 个分P", self.bvid, pages.len());
@@ -76,6 +77,7 @@ impl VideoBasicInfo {
                                     self,
                                     video_part,
                                     best_audio,
+                                    subscription,
                                 )
                                 .await
                                 {

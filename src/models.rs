@@ -78,8 +78,13 @@ pub struct VideoDimension {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Subscription {
-    pub title: String,
     pub bvid: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub album: Option<String>,
 }
 
 // 用于视频API响应的结构
