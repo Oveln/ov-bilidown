@@ -2,7 +2,7 @@ use qrcode::{QrCode, render::unicode};
 use reqwest::{Client, RequestBuilder};
 use std::{io, path::PathBuf, time::Duration};
 use tokio::{
-    fs::{create_dir_all, read_to_string, write},
+    fs::{read_to_string, write},
     sync::OnceCell,
     time::sleep,
 };
@@ -222,7 +222,6 @@ impl User {
             )));
         }
         let bytes = resp.bytes().await?;
-        create_dir_all(path).await?;
         let file_path = path.join(file_name);
         write(file_path, bytes).await?;
         Ok(())

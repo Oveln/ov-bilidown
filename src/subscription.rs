@@ -2,6 +2,7 @@ use std::path::Path;
 
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
+use tokio::fs::create_dir_all;
 
 use crate::error::Result;
 use crate::{VideoBasicInfo, user::User};
@@ -28,8 +29,6 @@ impl Subscription {
             "视频信息获取成功: {} ({} - {})",
             video.title, video.owner.name, video.bvid
         );
-        let safe_bvid = crate::utils::sanitize_filename(&self.bvid);
-        let output_dir = output_dir.join(&safe_bvid);
         if info_only {
             // 仅显示视频信息
             info!("以信息模式运行，不下载音频");
@@ -45,6 +44,9 @@ impl Subscription {
                 }
             }
         } else {
+            let safe_bvid = crate::utils::sanitize_filename(&self.bvid);
+            let output_dir = output_dir.join(&safe_bvid);
+            create_dir_all(&output_dir).await?;
             info!("开始下载音频到目录: {:?}", output_dir);
             // 下载音频
             video
