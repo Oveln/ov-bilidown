@@ -1,6 +1,6 @@
 use crate::{api::endpoints, error::Result, user::User};
-use serde::Deserialize;
 use log::{debug, trace};
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AudioQuality {
@@ -138,7 +138,7 @@ impl crate::models::VideoPart {
         user: &User,
     ) -> Result<Vec<DashAudioStream>> {
         let dash_resp = endpoints::get_play_url_dash(user, bvid, self.cid).await?;
-        
+
         let dash = dash_resp.data.dash;
         trace!("{:#?}", dash);
         let mut audio_streams = dash.audio.unwrap_or_default();

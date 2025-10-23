@@ -5,7 +5,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::models::Subscription;
+use crate::subscription::Subscription;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

@@ -9,6 +9,7 @@ use tokio::{
 
 use crate::{
     api::{client::ApiClient, endpoints},
+    config::AppConfig,
     error::{BilidownError, Result},
 };
 use log::{debug, error, info, warn};
@@ -58,6 +59,33 @@ impl User {
                 "Cookie 无效或登录已过期".to_string(),
             ))
         }
+    }
+
+    pub async fn ensure_user(config: &AppConfig) -> Result<Self> {
+        // 从配置文件加载用户或新建用户
+        let user = match User::new_from_file(&config.cookie_file).await {
+            Ok(u) => {
+                info!(
+                    "从文件加载用户信息: {}",
+                    &config.cookie_file.to_string_lossy()
+                );
+                u
+            }
+            Err(e) => {
+                info!("从文件加载用户失败: {}，将进行二维码登录", e);
+                info!("未找到现有cookie或cookie无效，正在进行二维码登录...");
+                let u = User::new()
+                    .await
+                    .map_err(|e| BilidownError::LoginError(e.to_string()))?;
+                u.save_to_file(&config.cookie_file)?;
+                info!(
+                    "登录成功，cookie已保存到: {}",
+                    &config.cookie_file.to_string_lossy()
+                );
+                u
+            }
+        };
+        Ok(user)
     }
 
     pub fn save_to_file(&self, file_name: &PathBuf) -> io::Result<()> {
@@ -162,7 +190,7 @@ impl User {
         info!("登录流程结束");
         Ok(())
     }
-    
+
     pub async fn get_wbi_keys(&self) -> (&str, &str) {
         let wbi_keys = self
             .wbi_keys
@@ -175,15 +203,15 @@ impl User {
             .await;
         (&wbi_keys.0, &wbi_keys.1)
     }
-    
+
     pub fn get_client(&self) -> &Client {
         &self.api_client.client
     }
-    
+
     pub fn get(&self, url: &str) -> RequestBuilder {
         self.api_client.get(url)
     }
-    
+
     pub async fn download_to_file(&self, url: &str, path: &PathBuf, file_name: &str) -> Result<()> {
         let req = self.get(url);
         let resp = req.send().await?;

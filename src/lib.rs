@@ -9,6 +9,7 @@ pub mod converter;
 pub mod download;
 pub mod error;
 pub mod models;
+pub mod subscription;
 pub mod user;
 pub mod utils;
 pub mod video;

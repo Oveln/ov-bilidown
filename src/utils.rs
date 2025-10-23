@@ -50,7 +50,7 @@ pub fn validate_file_exists(path: &Path) -> Result<()> {
 pub fn validate_file_not_empty(path: &Path) -> Result<()> {
     let metadata = std::fs::metadata(path)
         .map_err(|e| BilidownError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-    
+
     if metadata.len() == 0 {
         return Err(BilidownError::ConversionError(format!(
             "文件为空: {:?}",

@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use chrono;
 use clap::Parser;
 use futures::future;
@@ -8,78 +6,10 @@ use log::{debug, info, warn};
 use ov_bilidown::{
     VideoBasicInfo,
     config::{AppConfig, Cli},
-    error::{BilidownError, Result},
-    models::Subscription,
+    error::Result,
+    subscription::Subscription,
     user::User,
 };
-
-async fn download_single(
-    subscription: &Subscription,
-    user: &User,
-    output_dir: &PathBuf,
-    info_only: bool,
-) -> Result<()> {
-    let bvid = &subscription.bvid;
-    info!("开始处理视频: {}", bvid);
-
-    debug!("正在获取视频信息...");
-    let video = VideoBasicInfo::new_from_bvid(&user, bvid).await?;
-    info!(
-        "视频信息获取成功: {} ({} - {})",
-        video.title, video.owner.name, video.bvid
-    );
-
-    if info_only {
-        // 仅显示视频信息
-        info!("以信息模式运行，不下载音频");
-        println!("视频信息:");
-        println!("标题: {}", video.title);
-        println!("UP主: {}", video.owner.name);
-        println!("播放数: {}", video.stat.view);
-        println!("时长: {}秒", video.duration);
-        if let Some(pages) = &video.pages {
-            println!("分P数: {}", pages.len());
-            for page in pages {
-                println!("  - P{}: {} ({}秒)", page.page, page.part, page.duration);
-            }
-        }
-    } else {
-        info!("开始下载音频到目录: {:?}", output_dir);
-        // 下载音频
-        video
-            .download_best_quality_audios_to_file(&user, &output_dir, &subscription)
-            .await?;
-        info!("下载完成!");
-        println!("下载完成!");
-    }
-    Ok(())
-}
-
-async fn load_user(config: &AppConfig) -> Result<User> {
-    // 从配置文件加载用户或新建用户
-    let user = match User::new_from_file(&config.cookie_file).await {
-        Ok(u) => {
-            info!(
-                "从文件加载用户信息: {}",
-                &config.cookie_file.to_string_lossy()
-            );
-            u
-        }
-        Err(_) => {
-            warn!("未找到现有cookie，正在进行二维码登录...");
-            let u = User::new()
-                .await
-                .map_err(|e| BilidownError::LoginError(e.to_string()))?;
-            u.save_to_file(&config.cookie_file)?;
-            info!(
-                "登录成功，cookie已保存到: {}",
-                &config.cookie_file.to_string_lossy()
-            );
-            u
-        }
-    };
-    Ok(user)
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -124,7 +54,7 @@ async fn main() -> Result<()> {
         config.cookie_file.to_string_lossy()
     );
 
-    let user = load_user(&config).await?;
+    let user = User::ensure_user(&config).await?;
 
     match config.bvid {
         Some(ref bvid) => {
@@ -134,7 +64,9 @@ async fn main() -> Result<()> {
                 artist: None,
                 album: None,
             };
-            download_single(&subscription, &user, &config.output_dir, config.info_only).await?
+            subscription
+                .download(&user, &config.output_dir, config.info_only)
+                .await?
         }
         None => {
             let tasks = config
@@ -143,7 +75,7 @@ async fn main() -> Result<()> {
                 .enumerate()
                 .map(|(index, subscription)| {
                     let user = &user;
-                    let output_dir = &config.output_dir;
+                    let output_dir = config.output_dir.as_path();
                     let info_only = config.info_only;
                     async move {
                         let title = subscription.title.clone().unwrap_or_default();
@@ -155,8 +87,7 @@ async fn main() -> Result<()> {
                                     index, videos.title, videos.owner.name, videos.bvid
                                 );
                                 if let Err(e) =
-                                    download_single(&subscription, user, output_dir, info_only)
-                                        .await
+                                    subscription.download(&user, output_dir, info_only).await
                                 {
                                     warn!("订阅 {}:{} 处理失败: {}", index, title, e);
                                 } else {

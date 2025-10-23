@@ -76,17 +76,6 @@ pub struct VideoDimension {
     pub rotate: i32, // 是否旋转 0:正常 1:宽高对换
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Subscription {
-    pub bvid: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artist: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub album: Option<String>,
-}
-
 // 用于视频API响应的结构
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {

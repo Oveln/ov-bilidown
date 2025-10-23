@@ -2,7 +2,12 @@
 
 use serde::Deserialize;
 
-use crate::{error::Result, models::{ApiResponse, VideoBasicInfo}, user::User, wbi::WbiSendExt};
+use crate::{
+    error::Result,
+    models::{ApiResponse, VideoBasicInfo},
+    user::User,
+    wbi::WbiSendExt,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct GenData {

@@ -8,7 +8,8 @@ use lofty::tag::{Tag, TagType};
 use crate::{
     download::DashAudioStream,
     error::{BilidownError, Result},
-    models::{Subscription, VideoBasicInfo, VideoPart},
+    models::{VideoBasicInfo, VideoPart},
+    subscription::Subscription,
     utils,
 };
 use log::{debug, info};

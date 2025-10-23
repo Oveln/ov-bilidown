@@ -2,8 +2,6 @@
 
 use reqwest::{Client, RequestBuilder};
 
-
-
 pub struct ApiClient {
     pub client: Client,
     pub cookies: Vec<String>,

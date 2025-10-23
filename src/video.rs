@@ -5,7 +5,8 @@ use crate::{
     converter::{convert_audio_with_metadata, validate_converted_file},
     download::DashAudioStream,
     error::{BilidownError, Result},
-    models::{Subscription, VideoBasicInfo},
+    models::VideoBasicInfo,
+    subscription::Subscription,
     user::User,
 };
 use futures::future;

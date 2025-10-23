@@ -128,7 +128,8 @@ impl WbiSendExt for RequestBuilder {
         client: &reqwest::Client,
         img_key: &str,
         sub_key: &str,
-    ) -> impl std::future::Future<Output = std::result::Result<reqwest::Response, reqwest::Error>> + Send {
+    ) -> impl std::future::Future<Output = std::result::Result<reqwest::Response, reqwest::Error>> + Send
+    {
         async move {
             let mut request = self.build()?;
             let url = request.url_mut();
